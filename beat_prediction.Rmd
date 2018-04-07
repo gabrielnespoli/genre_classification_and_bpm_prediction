@@ -1,0 +1,251 @@
+---
+title: "HW1"
+author: "Gabriel Nespoli"
+date: "08 maggio 2017"
+output: pdf_document
+---
+
+I decided to evaluate the best model to train our data using LASSO, Ridge and Elastic-Net.
+
+The model was validated with the Cross Validation, specifically the Leave-one-out cross-validation (LOOCV) because our dataset is very small. The LOOCV could be a computational problem due to the number of iterations, but our dataset has just 20 observations, thus, it was performed just 19 iterations.
+
+The package needed for the cross validation of the possible models is glmnet.
+
+```{r, message=FALSE}
+require(glmnet)
+```
+
+Then, giving the first look into the data with the command 'summary'
+
+```{r}
+load(file="tempo_hw.RData")
+summary(tempo_hwdata)
+```
+
+```{r, echo=FALSE}
+cat("Total amount of training data available =", ncol(tempo_hwdata[,6:ncol(tempo_hwdata)])*nrow(tempo_hwdata[,6:ncol(tempo_hwdata)]))
+cat("Total amount of NAs =", sum(is.na(tempo_hwdata[,6:ncol(tempo_hwdata)])))
+cat("Sparsity =", 100*(1 - (sum(is.na(tempo_hwdata[,6:ncol(tempo_hwdata)]))/(ncol(tempo_hwdata[,6:ncol(tempo_hwdata)])*nrow(tempo_hwdata[,6:ncol(tempo_hwdata)])))),"%")
+```
+
+It can be seen that the dataset is very small and is also very sparse! In addition, it is observed that in all bands from the 8th peak and on the dataset is much more sparse. Therefore, from the beginning I decided to drop the 8th, 9th, 10th, 11th and 12th peaks out of our dataset.
+
+```{r}
+relevant_df = tempo_hwdata[ , -which(names(tempo_hwdata) %in% c(
+"band-1:peak-8","band-1:peak-9","band-1:peak-10","band-1:peak-11","band-1:peak-12",
+"band-2:peak-8","band-2:peak-9","band-2:peak-10","band-2:peak-11","band-2:peak-12",
+"band-3:peak-8","band-3:peak-9","band-3:peak-10","band-3:peak-11","band-3:peak-12",
+"band-4:peak-8","band-4:peak-9","band-4:peak-10","band-4:peak-11","band-4:peak-12",
+"band-5:peak-8","band-5:peak-9","band-5:peak-10","band-5:peak-11","band-5:peak-12",
+"band-6:peak-8","band-6:peak-9","band-6:peak-10","band-6:peak-11","band-6:peak-12",
+"band-7:peak-8","band-7:peak-9","band-7:peak-10","band-7:peak-11","band-7:peak-12",
+"band-8:peak-8","band-8:peak-9","band-8:peak-10","band-8:peak-11","band-8:peak-12"))]
+```
+
+After removing the less relevant peaks (in terms of prediction!), the remnant NA values are filled with the mean of the column.
+
+```{r}
+fill.na <- function(X) {
+  for(i in 1:ncol(X)){
+    X[is.na(X[,i]), i] <- mean(X[,i], na.rm = TRUE)
+  }
+  return(X)
+}
+
+relevant_df = fill.na(relevant_df)
+```
+
+It was still needed to analyse if all of the features are really necessary to train our model, given that the number of observations is very small if compared to the dimension of the data (n = 20, k = 64), so it is reasonable to remove the maximum of features that do not contribute much in the prediction and also to decrease the complexity of the model.
+
+It was used the LASSO/LOOCV with different datasets varying the quantity of features in it, always removing one peak of each band at a time.
+
+In each iteration it was calculated the average of Mean-Squared-Error between the Y observed and the Y predicted, like follows
+
+$$MSE = \dfrac{1}{n} \sum_{i=1}^n (Y_{obs}-Y_{pred})^2$$
+
+```{r}
+mse = function(yobs,ypred) mean((yobs-ypred)^2)
+```
+
+Then, the dataset with the smallest number was be used to test the different models.
+to select the dataset that present the smallest number. The generic function to evaluate the dataframe with less MSE is defined bellow, as also are defined the MSE function and the code to fill the NA values with the mean of the column. The code is presented bellow:
+
+```{r}
+mse.lasso.calculation <- function(df) {
+  n = nrow(df)
+  y = df$tapping
+  X = as.matrix(df[,-1])
+  
+  # Applying the model LASSO with Leave-One-Out-Cross-Validation
+  fit.cv = cv.glmnet(X,y,nfolds = n-1, alpha = 1)
+  
+  # Prediction
+  yhat = predict(fit.cv, X)
+  #y = as.matrix(y)
+  return(mse(yhat,y))
+}
+```
+
+Starting the evaluation, the MSE using 7 to 1 peaks is
+
+```{r, echo=FALSE,warning=FALSE}
+mse.df = mse.lasso.calculation(relevant_df)
+cat("MSE with peaks up to 7 =",mse.df)
+
+df = relevant_df[ , -which(names(relevant_df) %in% c(
+"band-1:peak-7", "band-2:peak-7", "band-3:peak-7", "band-4:peak-7", "band-5:peak-7", "band-6:peak-7", "band-7:peak-7", "band-8:peak-7"))]
+mse.df = mse.lasso.calculation(relevant_df)
+cat("MSE with peaks up to 6 =",mse.df)
+
+df = df[ , -which(names(df) %in% c(
+"band-1:peak-6", "band-2:peak-6", "band-3:peak-6", "band-4:peak-6", "band-5:peak-6", "band-6:peak-6", "band-7:peak-6", "band-8:peak-6"))]
+mse.df = mse.lasso.calculation(df)
+cat("MSE with peaks up to 5 =",mse.df)
+
+df = df[ , -which(names(df) %in% c(
+"band-1:peak-5", "band-2:peak-5", "band-3:peak-5", "band-4:peak-5", "band-5:peak-5", "band-6:peak-5", "band-7:peak-5", "band-8:peak-5"))]
+mse.df = mse.lasso.calculation(df)
+cat("MSE with peaks up to 4 =",mse.df)
+
+df = df[ , -which(names(df) %in% c(
+"band-1:peak-4", "band-2:peak-4", "band-3:peak-4", "band-4:peak-4", "band-5:peak-4", "band-6:peak-4", "band-7:peak-4", "band-8:peak-4"))]
+mse.df = mse.lasso.calculation(df)
+cat("MSE with peaks up to 3 =",mse.df)
+
+df = df[ , -which(names(df) %in% c(
+"band-1:peak-3", "band-2:peak-3", "band-3:peak-3", "band-4:peak-3", "band-5:peak-3", "band-6:peak-3", "band-7:peak-3", "band-8:peak-3"))]
+mse.df = mse.lasso.calculation(df)
+cat("MSE with peaks up to 2 =",mse.df)
+```
+
+As can be seen, for this prediction exercise, it is better to consider just the top 5 peaks of each band.
+
+Now, it is necessary to select the best model. It was run the LASSO, Ridge and nine elastic-net mixing parameter $\alpha = {0.1,0.2,0.3,0.4,0.5,0.6,0.7,0.8,0.9}$. The models was evaluated by the MSE and $R^2$.
+
+```{r, echo=FALSE}
+df.top5 = tempo_hwdata[ , c("tapping", "band-1:peak-1","band-1:peak-2","band-1:peak-3","band-1:peak-4","band-1:peak-5",                        "band-2:peak-1","band-2:peak-2","band-2:peak-3","band-2:peak-4","band-2:peak-5",                        "band-3:peak-1","band-3:peak-2","band-3:peak-3","band-3:peak-4","band-3:peak-5",                        "band-4:peak-1","band-4:peak-2","band-4:peak-3","band-4:peak-4","band-4:peak-5",                        "band-5:peak-1","band-5:peak-2","band-5:peak-3","band-5:peak-4","band-5:peak-5",                        "band-6:peak-1","band-6:peak-2","band-6:peak-3","band-6:peak-4","band-6:peak-5",                        "band-7:peak-1","band-7:peak-2","band-7:peak-3","band-7:peak-4","band-7:peak-5",                        "band-8:peak-1","band-8:peak-2","band-8:peak-3","band-8:peak-4","band-8:peak-5")]
+```
+
+```{r, warning=FALSE}
+n = nrow(df.top5)
+y = df.top5$tapping
+X = as.matrix(df.top5[,-1])
+
+X = fill.na(X)
+
+# Training the models
+alpha.v = seq(0,1,0.1)
+mse.v = rep(NA,10)
+r2.v = rep(NA,10)
+opt.mse = Inf
+opt.model = NA
+opt.i = 0
+for(i in 1:11) {
+  fit.cv = cv.glmnet(X,y,nfolds = n-1, alpha = alpha.v[i])
+  yhat = predict(fit.cv, X)
+  mse.v[i] = mse(yhat,y)
+  r2.v[i] = cor(yhat, y)^2
+  if(mse.v[i] < opt.mse) {
+    opt.mse = mse.v[i]
+    opt.model = fit.cv
+    opt.i = i
+  }
+}
+```
+
+```{r, echo=FALSE}
+for(i in 1:11){
+  cat("Alpha =",alpha.v[i])
+  cat("  MSE =", mse.v[i])
+  cat("  R2 =", r2.v[i])
+  cat("\n")
+}
+```
+
+As long the $R^2$ of all the $\alpha$ has similar value, the model was selected considering the MSE error. The MSE is minimized with $\alpha$ equal to
+
+```{r, echo=FALSE}
+cat("Alpha =", alpha.v[opt.i])
+```
+
+As expected, the Ridge is not a good model for a dataset like ours, with K = 40 and n = 20. Ridge regression never shrink the coefficients to 0, but just close to 0, so it ended up with a complex method.
+
+The value of $\lambda$ used is the one that minimizes the mean cross-validated error. The log of the value is expressed in the two graphs bellow by the vertical line. The first one shows the mean-squared-error depending on $\lambda$.
+
+```{r, echo=FALSE}
+plot(opt.model)
+abline(v = log(opt.model$lambda.min), lty = 5)
+```
+
+Moreover, in the graph bellow it is shown the coefficient values X log($\lambda$) X #features. It is clear that as $\lambda$ increases, the shrinkage process makes gradually the coefficients be set to 0. With the optimal $\lambda$, it ended up with 12 coefficients (11 features), as shown bellow
+
+*obs: to plot the graph, I trained the model without cross-validation (okay, it was not the same model, but almost, with the same $\alpha$ and with same non-zero coefficients, but values slightly different).
+
+```{r, echo=FALSE}
+fit = glmnet(X,y, alpha = alpha.v[opt.i])
+plot(fit,xvar = "lambda", label = T)
+abline(v = log(fit.cv$lambda.min), lty = 5)
+
+nzero.coef = data.frame(coef.name = dimnames(coef(opt.model))[[1]], coef.value=matrix(coef(opt.model)))
+nzero.names = nzero.coef[which(nzero.coef$coef.value != 0),]
+nzero.names
+```
+
+The dataframe bellow compares $Y_{pred}$ with $Y_{obs}$.
+
+```{r, echo=FALSE}
+comp = cbind(yhat, relevant_df$tapping, yhat/relevant_df$tapping)
+colnames(comp) <- c("Ypred", "Yobs", "Ypred/Yobs")
+```
+
+```{r}
+comp
+```
+
+Okay, nice and fun. Now, to test our model, please change the test_X dataframe and run the code below:
+
+```{r, warning=FALSE}
+load(file="tempo_hw.RData")
+
+fill.na <- function(X) {
+  for(i in 1:ncol(X)){
+    X[is.na(X[,i]), i] <- mean(X[,i], na.rm = TRUE)
+  }
+  return(X)
+}
+
+mse = function(yobs,ypred) mean((yobs-ypred)^2)
+
+df.top5 = tempo_hwdata[ , c("tapping", "band-1:peak-1","band-1:peak-2","band-1:peak-3","band-1:peak-4","band-1:peak-5",                        "band-2:peak-1","band-2:peak-2","band-2:peak-3","band-2:peak-4","band-2:peak-5",                        "band-3:peak-1","band-3:peak-2","band-3:peak-3","band-3:peak-4","band-3:peak-5",                        "band-4:peak-1","band-4:peak-2","band-4:peak-3","band-4:peak-4","band-4:peak-5",                        "band-5:peak-1","band-5:peak-2","band-5:peak-3","band-5:peak-4","band-5:peak-5",                        "band-6:peak-1","band-6:peak-2","band-6:peak-3","band-6:peak-4","band-6:peak-5",                        "band-7:peak-1","band-7:peak-2","band-7:peak-3","band-7:peak-4","band-7:peak-5",                        "band-8:peak-1","band-8:peak-2","band-8:peak-3","band-8:peak-4","band-8:peak-5")]
+
+n = nrow(df.top5)
+y = df.top5$tapping
+X = as.matrix(df.top5[,-1])
+
+X = fill.na(X)
+
+# Training the models
+alpha.v = seq(0,1,0.1)
+mse.v = rep(NA,10)
+r2.v = rep(NA,10)
+opt.mse = Inf
+opt.model = NA
+opt.i = 0
+opt.lambda = 0
+for(i in 1:11) {
+  fit.cv = cv.glmnet(X,y,nfolds = n-1, alpha = alpha.v[i])
+  ypred = predict(fit.cv, X)
+  mse.v[i] = mse(ypred,y)
+  r2.v[i] = cor(ypred, y)^2
+  if(mse.v[i] < opt.mse) {
+    opt.mse = mse.v[i]
+    opt.model = fit.cv
+    opt.i = i
+    opt.lambda = fit.cv$lambda.min
+  }
+}
+our.model = glmnet(X,y, alpha = alpha.v[opt.i], lambda = opt.lambda)
+
+test_X = X  # <======= PUT YOUR TEST X HERE
+ypred = predict(our.model, test_X)
+```

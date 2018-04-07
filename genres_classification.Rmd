@@ -1,0 +1,181 @@
+---
+title: "Song Genres Classification"
+author: "Gabriel Nespoli"
+date: "03 settembre 2017"
+output:
+  html_document: default
+  pdf_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(wrassp)
+library(tuneR)
+library(caret)
+suppressPackageStartupMessages( require(signal, quietly = TRUE) ) # Short Time Fourier Transform
+```
+
+The goal of the project is to make predictions over the genre of 150 songs. The first action is to convert the audio files into a dataset of energy x frequency x time-frame. The following code iterates over all the audio files, creating a vector representing the energy x frequency x time-frame and grouping all the vectors in a dataset, that was called audios.data.
+
+```{r, warning=FALSE}
+# iterate through all the audio files
+audios.data <- t(rep(NA, 5144)) # create an empty dataset that will store the energies
+total_files = 150
+labels = read.table("data/Labels.txt") # read the labels
+for (i in 1:total_files) {
+  filename = paste("data/f", i, ".au", sep = "")
+  # Read the .au file
+  x <- read.AsspDataObj(filename)
+
+  # Transform the sound wave into an <Wave> obj handled by tuneR
+  xwv <- Wave( as.numeric(x$audio), samp.rate = rate.AsspDataObj(x), bit = 16)
+  xw.dwn = downsample(xwv, samp.rate = 11025)
+  
+  # Setup
+  fs <- xw.dwn@samp.rate # sampling rate
+  winsize <- 2048 # time-windowing (in number of samples, power of 2 for the FFT)
+  hopsize <- 512 # windows overlap (in number of samples)
+  nfft <- 2048
+  noverlap <- winsize - hopsize
+  
+  # Go
+  sp <- specgram(x = xw.dwn@left, n = nfft, Fs = fs, window = winsize, overlap = noverlap)
+  
+  # Frequency bands selection
+  nb <- 2^3
+  lowB <- 100
+  eps <- .Machine$double.eps # machine precision to avoid over/underflow
+  # Number of seconds of the analyzed window
+  ntm <- ncol(sp$S) # number of (overlapping) time segments in the STFT
+  corrtime <- 15 # number of seconds to consider
+  
+  # Energy of bands
+  fco <- round( c(0, lowB*(fs/2/lowB)^((0:(nb-1))/(nb-1)))/fs*nfft )
+  energy <- matrix(0, nb, ntm)
+  for (tm in 1:ntm){
+    for (i in 1:nb){
+      lower_bound <- 1 + fco[i]
+      upper_bound <- min( c( 1 + fco[i + 1], nrow(sp$S) ) )
+      energy[i, tm] <- sum( abs(sp$S[ lower_bound:upper_bound, tm ])^2 )
+    }
+  }
+  
+  energy[energy < eps] <- eps
+  energy = 10*log10(energy)
+  
+  feat.vec <- c(energy) # col stacked matrix
+  audios.data = rbind(audios.data, feat.vec)
+}
+```
+
+```{r, echo=FALSE}
+# there was an annoying NA row in the first position of the matrix.
+audios.data <- audios.data[-1, ] # delete the first NA row
+rownames(audios.data) <- 1:nrow(audios.data) # rebuild the index
+audios.data <- as.data.frame(audios.data) # convert the matrix into a dataframe
+```
+
+To decrease the dimension of the dataframe and, consequently, make the problem simpler, it was decided to remove the high correlated features. The cut-off point was 80% of correlation between features.
+
+```{r, echo=FALSE}
+dim_prev = dim(audios.data)[2]
+```
+
+```{r}
+# Cutting off the highest correlated features -----------------------------
+# calculate correlation matrix
+corr <- cor(audios.data)
+
+# find attributes that are highly corrected
+high.corr <- findCorrelation(corr, cutoff=0.8)
+
+# removes the features that are very correlated
+audios.data <- audios.data[, -high.corr]
+```
+
+The dimension of the energy dataset was reduced from
+
+```{r, echo=FALSE}
+dim_prev
+```
+
+to
+
+```{r, echo=FALSE}
+dim(audios.data)[2]
+```
+
+It was tested the following models: random forest, naive bayes, boosted logistic regression and GLMNET.
+
+```{r, include=FALSE}
+set.seed(8)
+# define training control - 10-fold CV
+train_control<- trainControl(method="cv", number=10)
+
+# Random Forest
+rf <- train(x = audios.data, y = as.factor(unlist(labels)), trControl=train_control, method="rf", family=gaussian())
+
+# Naive Bayes
+nb <- train(x = audios.data, y = as.factor(unlist(labels)), trControl=train_control, method="naive_bayes", family=binomial())
+
+# Boosted Logistic Regression
+boost <- train(x = audios.data, y = as.factor(unlist(labels)), trControl=train_control, method="LogitBoost", family=binomial(), nIter=50)
+
+# GLMNET
+glmnet <- train(x = audios.data, y = as.factor(unlist(labels)), trControl=train_control, method="glmnet")
+```
+
+```{r}
+rf
+nb
+boost
+glmnet
+```
+
+```{r, echo=FALSE}
+model <- c("Random Forest", "Naive Bayes", "Boosted Logistic Regression", "GLMNET")
+acc <- c(0.627, 0.56, 0.511, 0.507)
+kappa <- c(0.533, 0.45, 0.379, 0.383)
+result <- data.frame(model, acc, kappa)
+result
+```
+
+Comparing the accuracy and the kappa coefficient of the models, the "best" one for this problem is the random forest. 
+
+Another observed point is that the result becomes very sensitive to the seed defined, because a small change in the subsets used in the cross validation process can affect drastically the accuracy of the model. This is due to the very small dataset for such complex and high dimensional problem.
+
+We varied the seed from 1 to 100 picked the seed 8 that produced the overall best accuracy. We will not reproduce here the test because it takes many hours and generates hundreds of lines of text. Just to demonstrate what was said above, follows an small example bellow.
+
+```{r, echo=FALSE}
+for (i in 7:9) {
+  set.seed(i)
+  rf <- train(x = audios.data, y = as.factor(unlist(labels)), trControl=train_control, method="rf", family=gaussian())
+   cat("Seed =", i)
+   print(rf)
+}
+```
+
+Also related to the sensivity to the subsets selected to train and test, the number of folders of the cross validation influences directly the accuracy of the model obtained by it.
+
+```{r, echo=FALSE, warning=FALSE}
+set.seed(8)
+for(cv in seq(10, 50, 10)){
+  train_control<- trainControl(method="cv", number=cv)
+  rf <- train(x = audios.data, y = as.factor(unlist(labels)), trControl=train_control, method="rf", family=gaussian())
+  cat("Fold =", cv, "- ")
+  print(rf)
+}
+```
+
+As demonstrated for giving the better answer to our problem, we will continue the analyses with the configuration pair (seed = 8, fold = 10).
+
+We will use now the confusion matrix to look deeper into the predictions of our classification.
+
+```{r, echo=FALSE}
+set.seed(8)
+train_control<- trainControl(method="cv", number=10)
+rf <- train(x = audios.data, y = as.factor(unlist(labels)), trControl=train_control, method="rf", family=gaussian())
+rf$finalModel$confusion
+```
+
+All the classes presented an acceptable error, except for the hiphop genre, which could be correctly classified in just 7 cases out of 30 and exhibited an error rate of almost than 77%.
